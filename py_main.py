@@ -1,4 +1,4 @@
-﻿##############################################
+##############################################
 
 from pyclbr import Function
 import sys
@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (QApplication, QComboBox, QDialog,
                                QMenu, QMenuBar, QPushButton, QSpinBox,
                                QTextEdit, QVBoxLayout,QStatusBar,QMainWindow,QWidget)
 
-from PySide6.QtGui import QIcon, QScreen,QActionEvent
+from PySide6.QtGui import QIcon, QScreen,QActionEvent, QAction
 
 
 
@@ -28,23 +28,132 @@ __bytesize__ = ["5","6","7","8"]
 __parity__ = ["None","Even", "Odd", "Mark","Space"]
 __stopbit__ = ["1","1.5","2"]
 __flux__ = ["Software Xon / Xoff", "Hardware RTS/CTS", "Hardware DSR/DTR"]
-__Dyn__ = True
+
+
+class SerialCom():
+
+    def __init__(self):
+        self.rx_data = b''
+        self.ser = None
+        self.lock = threading.Lock()
+
+    def status(self):
+        return self.ser
+
+    def getopen(self):
+        if not self.port.isOpen() :
+            self.port.open()
+
+    def getclose(self):
+        self.port.close()
+
+    def connect(self, port = "", baudrate = 0, bytesize = 0,
+                 parity = '', stopbit = 0, xonxoff = False, rtscts = False,
+                 dsrdtr = False, timeout = 0):
+        i = 0
+        if self.lock.acquire(blocking = True , timeout = 1): 
+            try :
+                print("Connexion to " + port + "... =>",end="\t")
+                with serial.Serial() as self.ser:
+                    self.ser.port = port
+                    self.ser.baudrate = baudrate
+                    self.ser.bytesize = bytesize
+                    self.ser.parity = parity
+                    self.ser.stopbit = stopbit
+                    self.ser.xonxoff = xonxoff
+                    self.ser.setRTS = rtscts
+                    self.ser.setDTR = dsrdtr
+                    self.ser.timeout = timeout
+                #time.sleep(0.05)
+                self.ser.close()
+                self.ser.open()
+                print("connected")
+                i = 1
+                args = True
+            except :
+                i = -1
+                print("error : serial port is busy")
+            self.lock.release()
+        else :
+            i = 0
+            print("error : threadCom is locked")
+        #if(i == 1) : 
+        #        self.thread_rxData = Thread_GET(self.listen_rxData,0.0001)#Thread_timer(0.000001,self.listen_rxData)#,['Repeating'])
+        #        self.thread_rxData.start()
+        return i
+
+    def disconnect(self):
+        i = 0
+        if self.lock.acquire(blocking = True , timeout = 1):
+            try : 
+                print("Disconnect from " + self.ser.port + "... =>",end="\t")
+                if self.ser !=None :
+                    i = 1
+                    if self.ser.isOpen() :
+                        self.ser.close()
+                        while self.ser.isOpen() :
+                            time.sleep(0.001)
+                        print("disconnected")
+                        #self.thread_rxData.thr_stop()
+                    else : 
+                        i = 2
+                        print("aldready disconnected")
+                else :
+                    i = -2
+                    print("error : no existing connection")
+            except :
+                i = -1
+                print("error during disconnection")
+            self.lock.release()
+        else : 
+            i = 0
+            print("error : threadCom is locked")
+        return i
+
+    def listen_rxData(self):
+        if self.lock.acquire(blocking = True, timeout = 1) :
+            try :
+                if self.ser.isOpen and self.ser.inWaiting()>0 :
+                    rx_data = self.ser.read(1)
+                    self.rx_data += rx_data
+                    #print(self.rx_data)
+            except: pass
+            self.lock.release()
+
+    def get_data(self):
+        data = b""
+        if self.lock.acquire(blocking = True, timeout = 1):
+            data = self.rx_data
+            self.rx_data = b""
+            self.lock.release()
+        return data
+
+    def send_data(self, data = b''):
+        r = self.ser.write(data)
+        return r
+
 
 
 class Dialog(QDialog):
     #num_grid_rows = 3
     #num_buttons = 4
 
-    def __init__(self):
+    def __init__(self, ser = SerialCom, statusbar = QStatusBar):
         super().__init__()
 
+        self.auto = False
+        self.bootloader_active = False
+        self.bootloader_detected = False
+        self.bootloader_finished = False
         self._dyn = True
+        self.ser = ser
         self.create_menu()
         self.create_gpbox_Serial()
         self.create_gpbox_DispInfo()
         self.create_gpbox_DispSerial()
         self.create_gpbox_KeyDecode()
         self.varprint = ""
+        self.statusbar = statusbar
 
         #self.thread_ser = ThreadCom()
 
@@ -64,7 +173,7 @@ class Dialog(QDialog):
         self.setWindowTitle("Basic Layouts")
         self.refresh()
         
-        self.auto = False
+        
         print("SubFrame Interface initialized")
 
     def create_menu(self):
@@ -97,6 +206,27 @@ class Dialog(QDialog):
         lb_ser_stopbits = QLabel("Stop Bits")
         lb_ser_flux = QLabel("Controle Flux")
         
+        #Bouton connect
+        self.bt_ser_connect = QPushButton("Connect")
+        self.bt_ser_connect.clicked.connect(self.ser_connect)
+        #List config COM
+        self.cb_ser_port = QComboBox()
+        self.cb_ser_port.addItems("")
+
+        self.cb_ser_baudrate = QComboBox()
+        self.cb_ser_baudrate.addItems(__baudrate__)
+
+        self.cb_ser_bytesize = QComboBox()
+        self.cb_ser_bytesize.addItems(__bytesize__)
+ 
+        self.cb_ser_parity = QComboBox()
+        self.cb_ser_parity.addItems(__parity__)
+
+        self.cb_ser_stopbits = QComboBox()
+        self.cb_ser_stopbits.addItems(__stopbit__)
+
+        self.cb_ser_flux = QComboBox()
+        self.cb_ser_flux.addItems(__flux__)
 
         self.layout_Serial.addWidget(lb_ser_port,0,0,1,1)
         self.layout_Serial.addWidget(lb_ser_baudrate,0,1,1,1)
@@ -104,34 +234,6 @@ class Dialog(QDialog):
         self.layout_Serial.addWidget(lb_ser_parity,0,3,1,1)
         self.layout_Serial.addWidget(lb_ser_stopbits,0,4,1,1)
         self.layout_Serial.addWidget(lb_ser_flux,0,5,1,1)
-        
-        self.bt_ser_connect = QPushButton("Connect")
-        self.bt_ser_connect.clicked.connect(self.ser_connect)
-
-        self.cb_ser_port = QComboBox()
-        self.cb_ser_port.addItems("")
-        #self.cb_ser_port.setCurrentIndex(self.cb_ser_port.count()-1)
-
-        self.cb_ser_baudrate = QComboBox()
-        self.cb_ser_baudrate.addItems(__baudrate__)
-        #self.cb_ser_baudrate.setCurrentIndex(self.cb_ser_baudrate.count()-1)
-
-        self.cb_ser_bytesize = QComboBox()
-        self.cb_ser_bytesize.addItems(__bytesize__)
-        #self.cb_ser_bytesize.setCurrentIndex(self.cb_ser_stopbits.count()-1)
- 
-        self.cb_ser_parity = QComboBox()
-        self.cb_ser_parity.addItems(__parity__)
-        #self.cb_ser_parity.setCurrentIndex(self.cb_ser_parity.count()-1)
-
-        self.cb_ser_stopbits = QComboBox()
-        self.cb_ser_stopbits.addItems(__stopbit__)
-        #self.cb_ser_stopbits.setCurrentIndex(self.cb_ser_stopbits.count()-1)
-
-        self.cb_ser_flux = QComboBox()
-        self.cb_ser_flux.addItems(__flux__)
-        #self.cb_ser_flux.setCurrentIndex(self.cb_ser_flux.count()-1)
-
         self.layout_Serial.addWidget(self.cb_ser_port,1,0,1,1)
         self.layout_Serial.addWidget(self.cb_ser_baudrate,1,1,1,1)
         self.layout_Serial.addWidget(self.cb_ser_bytesize,1,2,1,1)
@@ -140,11 +242,11 @@ class Dialog(QDialog):
         self.layout_Serial.addWidget(self.cb_ser_flux,1,5,1,1)
         self.layout_Serial.addWidget(self.bt_ser_connect,1,6,1,1)
 
-                
-        def update_port(self):
+        def update_port():
             if self._dyn and self.cb_ser_port.currentText() !='' :
                 self.port = str(self.cb_ser_port.currentText())
                 self.cb_ser_baudrate.clear()
+                self.cb_ser_bytesize.clear()
                 self.cb_ser_parity.clear()
                 self.cb_ser_stopbits.clear()
                 self.cb_ser_flux.clear()
@@ -172,13 +274,13 @@ class Dialog(QDialog):
                 self.cb_ser_stopbits.addItems(list(map(str,s.STOPBITS)))
                 s.close()
                 self.cb_ser_flux.addItems(__flux__)
-        def update_baudrate(self):
+        def update_baudrate():
             try : self.baudrate = int(self.cb_ser_baudrate.currentText())
             except : pass
-        def update_bytesize(self):
+        def update_bytesize():
             try : self.bytesize = float(self.cb_ser_bytesize.currentText())
             except : pass
-        def update_parity(self):
+        def update_parity():
             try:
                 self.parity = ""
                 n = 0
@@ -192,10 +294,10 @@ class Dialog(QDialog):
                         case 3 : self.parity = 'M'
                         case 4 : self.parity = 'S'
             except : pass
-        def update_stopbits(self):
+        def update_stopbits():
             try : self.stopbits = float(self.cb_ser_stopbits.currentText())
             except : pass
-        def update_flux(self):
+        def update_flux():
             try:
                 self.xonxoff = False
                 self.rtscts = False
@@ -255,7 +357,7 @@ class Dialog(QDialog):
         self.qte_dispserial = QTextEdit()
         self.qte_dispserial.setPlainText("")
         self.qte_dispserial.setReadOnly(True)
-        layout_DispSerial.addWidget(self.qte_dispserial, 0, 0, 5, 5)
+        layout_DispSerial.addWidget(self.qte_dispserial, 0, 0, 5, 6)
 
 
         self.bt_ser_read = QPushButton("Read")
@@ -264,45 +366,63 @@ class Dialog(QDialog):
 
         self.bt_ser_write = QPushButton("Write")
         self.bt_ser_write.clicked.connect(self.ser_write)
-        layout_DispSerial.addWidget(self.bt_ser_write, 5, 2, 1, 1)
+        layout_DispSerial.addWidget(self.bt_ser_write, 5, 1, 1, 1)
 
-        self.bt_ser_auto = QPushButton("Auto")
-        self.bt_ser_auto.clicked.connect(self.ser_auto)
-        layout_DispSerial.addWidget(self.bt_ser_auto, 5, 1, 1, 1)
+        self.bt_ser_bootdetect = QPushButton("Detect Boot")
+        self.bt_ser_bootdetect.clicked.connect(self.ser_bootdetect)
+        layout_DispSerial.addWidget(self.bt_ser_bootdetect, 5, 4, 1, 1)
+
 
         bt_dispserial_del = QPushButton("delete")
         bt_dispserial_del.clicked.connect(self.qte_dispserial.clear)
-        layout_DispSerial.addWidget(bt_dispserial_del, 5, 4, 1, 1)
+        layout_DispSerial.addWidget(bt_dispserial_del, 5, 5, 1, 1)
 
         layout_DispSerial.setColumnStretch(0, 10)
         layout_DispSerial.setColumnStretch(1, 10)
         layout_DispSerial.setColumnStretch(2, 10)
         layout_DispSerial.setColumnStretch(3, 2000)
         layout_DispSerial.setColumnStretch(4, 10)
+        layout_DispSerial.setColumnStretch(5, 10)
         self._gpbox_DispSerial.setLayout(layout_DispSerial)
 
+    def ser_bootdetect(self):
+        self.bootloader_active = True
+        self.printInfo("Bootloader activated")
+        self.bootloader_detected = False
+        self.bootloader_finished = False
+
+
     def printSerial(self,arg="",end='\n'):
-        self.qte_dispserial.setPlainText(self.qte_dispserial.toPlainText()+arg+end)
+        tutu = self.qte_dispserial.toPlainText() + arg + end
+        self.qte_dispserial.setText(tutu)
+        #self.qte_dispserial.setPlainText(self.qte_dispserial.toPlainText()+arg+end)
         cursor = self.qte_dispserial.textCursor()
         self.qte_dispserial.moveCursor(cursor.MoveOperation.End)
         self.qte_dispserial.repaint()
-        test = "Sending discover...\n"
-        test += test
-        if self.qte_dispserial.toPlainText().find(test) != -1 :
-            self.auto = False
+        Bootloader_detect = "Booting..."
+        Bootloader_OK = "<RealTek>"
+        if self.bootloader_active :
+            pos1 = self.qte_dispserial.toPlainText().find(Bootloader_detect)
+            pos2 = self.qte_dispserial.toPlainText().find(Bootloader_OK)
+            if pos1 != -1 and not self.bootloader_detected :
+                self.bootloader_detected = True
+                self.printInfo("Bootloader detected : " + str(pos1))
+                for i in range(4):
+                    toto = chr(27).encode()
+                    tt = self.ser.send_data(toto) #self.ser_write(toto)
+                    time.sleep(0.1)
+                    #self.printInfo("\t %s " % toto + str(i))
+            if pos2 != -1 and not self.bootloader_finished :
+                self.printInfo("Bootloader is OK : " + str(pos1))
+                self.bootloader_detected = True
+                self.bootloader_active = False
 
     def ser_read(self):
-        #s = serial.Serial("COM6", 38400, timeout=1)
-        #session.flush() # it is buffering. required to get the data out *now*
         answer=[]
         answer = self.ser.get_data()
         answer = answer.decode('utf-8',errors = 'ignore')
-        #answer = answer.replace("b'","")
         answer = answer.replace("\r","")
-        #answer = answer.replace("\\n","\n")
-        #answer = answer.replace("'","")
-        #answer += "\n"
-        if answer != '' : self.printSerial(answer,end="") 
+        if answer != '' : self.printSerial(answer,end="")
 
     def ser_write(self):
         return 0
@@ -335,7 +455,6 @@ class Dialog(QDialog):
     def ser_connect(self):
         if self.bt_ser_connect.text() == "Connect":
             self.printInfo("%s : connexion...  =>" % str(self.port), end = '\t')
-            self.ser = SerialCom()
             d = self.ser.connect(port = str(self.port),
                                     baudrate = int(self.baudrate),
                                     bytesize = int(self.bytesize),
@@ -348,7 +467,9 @@ class Dialog(QDialog):
             match d :
                 case -1 : self.printInfo("error : serial port is busy")
                 case 0 : self.printInfo("error : threadCom is locked")
-                case 1 : self.printInfo("connected")
+                case 1 : 
+                    self.printInfo("connected")
+                    self.statusbar.showMessage("%s : Connected" % self.ser.status().port)
 
         elif self.bt_ser_connect.text() == "Disconnect":
             try :
@@ -358,35 +479,21 @@ class Dialog(QDialog):
                     case -2 : self.printInfo("error : no existing connection")
                     case -1 : self.printInfo("error during disconnection")
                     case 0 : self.printInfo("error : threadCom is locked")
-                    case 1 : self.printInfo("disconnected")
+                    case 1 : 
+                        self.printInfo("disconnected")
+                        self.statusbar.showMessage("%s : Disconnected" % self.ser.status().port)
                     case 2 : self.printInfo("aldready disconnected")
             except : self.printInfo("error during disconnection")
 
         if self.ser.status().isOpen() :
-            self.thread_rxData = Thread_GET(self.ser.listen_rxData,self.get_auto,self.ser_read,0.0001)#Thread_timer(0.000001,self.listen_rxData)#,['Repeating'])
+            self.thread_rxData = Thread_GET(self.ser.listen_rxData,self.get_auto,self.bt_ser_read.click,0.0001)#Thread_timer(0.000001,self.listen_rxData)#,['Repeating'])
             self.thread_rxData.start()
+            self.auto = True
             self.bt_ser_connect.setText("Disconnect")
         else : 
             self.thread_rxData.thr_stop()
+            self.auto = False
             self.bt_ser_connect.setText("Connect")
-
-    def ser_auto(self):
-        self.auto = not self.auto
-        while self.auto:
-            #s = serial.Serial("COM6", 38400, timeout=1)
-            #session.flush() # it is buffering. required to get the data out *now*
-            answer=[]
-            answer = self.ser.get_data()
-            answer = answer.decode('utf-8',errors='ignore')
-            #answer = answer.replace("b'","")
-            answer = answer.replace("\r","")
-            #answer = answer.replace("\\n","\n")
-            #answer = answer.replace("'","")
-            #answer += "\n"
-            if answer != '' :
-                self.printSerial(answer,end="")
-                time.sleep(0.1)
-            else : time.sleep(0.5)
  
     def get_auto(self):
         return self.auto
@@ -463,138 +570,42 @@ class Dialog(QDialog):
         self._gpbox_KeyDecode.setLayout(layout_KeyDecode)
 
 
-class SerialCom():
-
-    def __init__(self):
-        self.rx_data = b''
-        self.ser = None
-        self.lock = threading.Lock()
-
-    def status(self):
-        return self.ser
-
-    def getopen(self):
-        if not self.port.isOpen() :
-            self.port.open()
-
-    def getclose(self):
-        self.port.close()
-
-    def connect(self, port = "", baudrate = 0, bytesize = 0,
-                 parity = '', stopbit = 0, xonxoff = False, rtscts = False,
-                 dsrdtr = False, timeout = 0):
-        i = 0
-        if self.lock.acquire(blocking = True , timeout = 1): 
-            try :
-                print("Connexion to " + port + "... =>",end="\t")
-                with serial.Serial() as self.ser:
-                    self.ser.port = port
-                    self.ser.baudrate = baudrate
-                    self.ser.bytesize = bytesize
-                    self.ser.parity = parity
-                    self.ser.stopbit = stopbit
-                    self.ser.xonxoff = xonxoff
-                    self.ser.setRTS = rtscts
-                    self.ser.setDTR = dsrdtr
-                    self.ser.timeout = timeout
-                #time.sleep(0.05)
-                self.ser.close()
-                self.ser.open()
-                print("connected")
-                i = 1
-            except :
-                i = -1
-                print("error : serial port is busy")
-            self.lock.release()
-        else :
-            i = 0
-            print("error : threadCom is locked")
-        #if(i == 1) : 
-        #        self.thread_rxData = Thread_GET(self.listen_rxData,0.0001)#Thread_timer(0.000001,self.listen_rxData)#,['Repeating'])
-        #        self.thread_rxData.start()
-        return i
-
-    def disconnect(self):
-        i = 0
-        if self.lock.acquire(blocking = True , timeout = 1):
-            try : 
-                print("Disconnect from " + self.ser.port + "... =>",end="\t")
-                if self.ser !=None :
-                    i = 1
-                    if self.ser.isOpen() :
-                        self.ser.close()
-                        while self.ser.isOpen() :
-                            time.sleep(0.001)
-                        print("disconnected")
-                        #self.thread_rxData.thr_stop()
-                    else : 
-                        i = 2
-                        print("aldready disconnected")
-                else :
-                    i = -2
-                    print("error : no existing connection")
-            except :
-                i = -1
-                print("error during disconnection")
-            self.lock.release()
-        else : 
-            i = 0
-            print("error : threadCom is locked")
-        return i
-
-    def listen_rxData(self):
-        if self.lock.acquire(blocking = True, timeout = 1) :
-            try :
-                if self.ser.isOpen and self.ser.inWaiting()>0 :
-                    rx_data = self.ser.read(1)
-                    self.rx_data += rx_data
-                    #print(self.rx_data)
-            except: pass
-            self.lock.release()
-
-    def get_data(self):
-        if self.lock.acquire(blocking = True, timeout = 1):
-            data = self.rx_data
-            self.rx_data = b""
-            self.lock.release()
-        return data
-
-    def send_data(self, *data):
-        r =self.port.write(data)
-        return r
-
-class Thread_timer(threading.Timer):
+#class Thread_timer(threading.Timer):
  
-    #def __init__(self):
-    #    super().__init__(self)
-    #    print("ThreadCom initialized")
+#    #def __init__(self):
+#    #    super().__init__(self)
+#    #    print("ThreadCom initialized")
     
-    def run(self):
-        print("ThreadTimer Started %s :" % self.getName)
-        while not self.finished.wait(self.interval):
-             self.function()
+#    def run(self):
+#        print("ThreadTimer Started %s :" % self.getName)
+#        while not self.finished.wait(self.interval):
+#             self.function()
  
-    def stop(self):
-        self.cancel()  # pour terminer une eventuelle attente en cours de Timer
-        print("ThreadTimer Stopped")
+#    def stop(self):
+#        self.cancel()  # pour terminer une eventuelle attente en cours de Timer
+#        print("ThreadTimer Stopped")
 
 class Thread_GET(threading.Thread):
 
-    def __init__(self,function1,function2,function3,interval):
+    def __init__(self,main_fct,cond_fct,sec_fct,interval):
         super(Thread_GET,self).__init__()
-        self.function1 = function1
-        self.function2 = function2
-        self.function3 = function3
+        self.main_fct = main_fct
+        self.cond_fct = cond_fct
+        self.sec_fct = sec_fct
         self.interval = interval
         self.stop = False
+        self.connected = 0
         print("ThreadCom initialized")
 
     def run(self):
         print("ThreadGET Started")
+        n = 0
         while not self.stop :#not Dialog.ser_auto_status:
-            self.function1()
-            #if self.function2():
-            #    self.function3()
+            self.main_fct()
+            if n > 50 and self.cond_fct():
+                self.sec_fct()
+                n = 0
+            n += 1
             time.sleep(self.interval)
         print("ThreadGET Stopped")
 
@@ -604,14 +615,17 @@ class Thread_GET(threading.Thread):
 
 class StatusBar(QStatusBar):
 
-    def __init__(self):
+    def __init__(self, ser = SerialCom):
         super().__init__()
-        self.showMessage("toto")
+        self.ser = ser
+        self.showMessage("Disconnected")
+
 
 class SerialInterface(QMainWindow):
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None , ser = SerialCom):
         super().__init__(parent)
+        self.ser = ser
         self.width=600
         self.height=800
        
@@ -619,11 +633,13 @@ class SerialInterface(QMainWindow):
         self.setWindowIcon(QIcon('./resources/logo-100.png'))
         self.setWindowTitle(__prgm__)
        
+        #Initialize Serial Communication
+        self.ser = SerialCom()
+
         #center window on screen
         qr = self.frameGeometry()
         cp = QScreen().availableGeometry().center()
         qr.moveCenter(cp)
-       
        
         #init layout
         centralwidget = QWidget(self)
@@ -631,19 +647,17 @@ class SerialInterface(QMainWindow):
         self.setCentralWidget(centralwidget)
 
         #add Status bar
-        self.statusbar = StatusBar()
+        self.statusbar = StatusBar(self.ser)
         self.setStatusBar(self.statusbar)
 
        
         #add connect group / DiagBox
-        self.dialog=Dialog()
+        self.dialog=Dialog(self.ser,self.statusbar)
         centralLayout.addWidget(self.dialog)
-
         print("MainFrame Interface initialized")
 
 
 if __name__ == "__main__":
-
     print("Lidl Gateway Flash soft Started")
     app = QApplication(sys.argv)
     frame = SerialInterface()
